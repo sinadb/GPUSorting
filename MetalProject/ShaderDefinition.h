@@ -14,6 +14,20 @@
 
 
 
+struct RT_Camera {
+    simd_float3 origin;
+    simd_float3 right;
+    simd_float3 up;
+    simd_float3 forward;
+};
+
+struct Sphere {
+    simd_float3 origin;
+    simd_float3 colour;
+    float radiusSquared;
+    float radius;
+    
+};
 
 
 

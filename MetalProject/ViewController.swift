@@ -212,6 +212,7 @@ class ViewController: NSViewController {
         }
         
         mtkView = mtkViewTemp
+        //mtkView.drawableSize = CGSize(width: 800, height: 800)
        
         
 

@@ -12,6 +12,24 @@ import AppKit
 
 
 
+func createGenericPipeline(device : MTLDevice, vertexStageName : String, fragmentStageName : String, drawableColourFormat : MTLPixelFormat) -> MTLRenderPipelineState {
+    
+    let library = device.makeDefaultLibrary()
+    let pipelineDC = MTLRenderPipelineDescriptor()
+    pipelineDC.vertexFunction = library?.makeFunction(name: vertexStageName)
+    pipelineDC.fragmentFunction = library?.makeFunction(name: fragmentStageName)
+    pipelineDC.colorAttachments[0].pixelFormat = drawableColourFormat
+    pipelineDC.depthAttachmentPixelFormat = .depth32Float
+    
+    
+    return try! device.makeRenderPipelineState(descriptor: pipelineDC)
+    
+   
+    
+}
+
+
+
 class skyBoxScene {
     var fps = 0
     var translateFirst = 0
@@ -348,11 +366,43 @@ class Renderer : NSObject, MTKViewDelegate {
     let voxelizedMesh : Voxel
     
     
+    
+    let renderToScreenPipeline : MTLRenderPipelineState
+    let rayTracingPipeline : MTLComputePipelineState
+    let drawableTexture : MTLTexture
+    let drawableSize = MTLSize(width: 800, height: 800, depth: 1)
+    var spheres = [Sphere(origin: simd_float3(0,0,0), colour: simd_float3(1,0,0), radiusSquared: 0.25, radius: 0.5)]
+   
+    var BB = MTLAxisAlignedBoundingBox(min: MTLPackedFloat3Make(-0.5, -0.5, -0.5), max: MTLPackedFloat3Make(0.5, 0.5, 0.5))
+    
+    
+    let accelerationStructureDC : MTLPrimitiveAccelerationStructureDescriptor
+    let accelerationStructure : MTLAccelerationStructure
+    
+    let functionTable : MTLIntersectionFunctionTable
+    let scratchBufferAC : MTLBuffer
+    let sizesAC : MTLAccelerationStructureSizes
+    
+    
+    let instancedAccelerationStructureDC : MTLInstanceAccelerationStructureDescriptor
+    let instancedAccelerationStructure : MTLAccelerationStructure
+    let scratchBufferIAC : MTLBuffer
+    let sizesIAC : MTLAccelerationStructureSizes
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true){_ in
+        print("Timer")
+    }
+    var colours = [packed_float4]()
+    let colourBuffer : MTLBuffer
+    var rt_camera = RT_Camera(origin: simd_float3(6,0,0), right: simd_float3(1,0,0), up: simd_float3(0,1,0), forward: simd_float3(-2,0,-1))
+    
+    
+    
     init?(mtkView: MTKView){
         
         
         device = mtkView.device!
         mtkView.preferredFramesPerSecond = 120
+        //drawableSize = MTLSize(width: Int(mtkView.drawableSize.width), height: Int(mtkView.drawableSize.height), depth: 1)
         commandQueue = device.makeCommandQueue()!
         mtkView.colorPixelFormat = .bgra8Unorm_srgb
         mtkView.depthStencilPixelFormat = .depth32Float
@@ -378,6 +428,122 @@ class Renderer : NSObject, MTKViewDelegate {
        
         
         voxelizedMesh = Voxel(device: device, address: "blub_triangulated", minmax: [minBound,maxBound], gridLength: length)
+        
+        renderToScreenPipeline = createGenericPipeline(device: device, vertexStageName: "drawToScreenVertex", fragmentStageName: "drawToScreenFragment", drawableColourFormat: mtkView.colorPixelFormat)
+        
+        
+        let textureDC = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: mtkView.colorPixelFormat, width: drawableSize.width, height: drawableSize.height, mipmapped: False)
+        textureDC.usage = [.shaderRead,.shaderWrite]
+        drawableTexture = device.makeTexture(descriptor: textureDC)!
+        
+        
+        
+        // set up the acceleration structure
+        accelerationStructureDC = MTLPrimitiveAccelerationStructureDescriptor()
+        
+        let geometryDC = MTLAccelerationStructureBoundingBoxGeometryDescriptor()
+        
+        let boundingBoxBuffer = device.makeBuffer(bytes: &BB, length: MemoryLayout<MTLAxisAlignedBoundingBox>.stride * 1 ,options: [])
+        let sphereBuffer = device.makeBuffer(bytes: spheres, length: MemoryLayout<Sphere>.stride * 1,options: [])
+        
+        geometryDC.boundingBoxBuffer = boundingBoxBuffer
+        geometryDC.boundingBoxCount = 1
+        geometryDC.boundingBoxStride = MemoryLayout<MTLAxisAlignedBoundingBox>.stride * 1
+        geometryDC.intersectionFunctionTableOffset = 0
+
+        
+        geometryDC.primitiveDataBuffer = sphereBuffer
+        geometryDC.primitiveDataStride = MemoryLayout<Sphere>.stride
+        geometryDC.primitiveDataElementSize = MemoryLayout<Sphere>.stride
+        
+        
+        accelerationStructureDC.geometryDescriptors = [geometryDC]
+        
+        
+        
+       
+        sizesAC = device.accelerationStructureSizes(descriptor: accelerationStructureDC)
+        accelerationStructure = device.makeAccelerationStructure(descriptor: accelerationStructureDC)!
+        scratchBufferAC = device.makeBuffer(length: sizesAC.buildScratchBufferSize)!
+        
+      
+        
+       
+        
+        instancedAccelerationStructureDC = MTLInstanceAccelerationStructureDescriptor()
+        instancedAccelerationStructureDC.instanceDescriptorType = .userID
+        instancedAccelerationStructureDC.instanceCount = 100
+        instancedAccelerationStructureDC.instancedAccelerationStructures = [accelerationStructure]
+        
+        let instancesBuffer = device.makeBuffer(length: MemoryLayout<MTLAccelerationStructureUserIDInstanceDescriptor>.size * 100)!
+        
+        let DCsPtr = instancesBuffer.contents().bindMemory(to: MTLAccelerationStructureUserIDInstanceDescriptor.self,capacity:100)
+        
+        var transformationMatrices = [MTLPackedFloat4x3]()
+        for i in 0...99{
+            let x = Float.random(in: -10...10)
+            let y = Float.random(in: -5...5)
+            let z = Float.random(in: -15 ... -5)
+            transformationMatrices.append(create_translation_matix_packed(translate: simd_float3(x,y,z)))
+            
+            (DCsPtr + i).pointee.accelerationStructureIndex = UInt32(0)
+            (DCsPtr + i).pointee.intersectionFunctionTableOffset = 0
+            (DCsPtr + i).pointee.transformationMatrix = transformationMatrices[i]
+            (DCsPtr + i).pointee.mask = UInt32(1)
+            (DCsPtr + i).pointee.userID = UInt32(i)
+            
+            let r = Float.random(in: 0...1)
+            let g = Float.random(in: 0...1)
+            let b = Float.random(in: 0...1)
+            
+            colours.append(packed_float4(r, g, b))
+        }
+        
+       
+      
+        colourBuffer = device.makeBuffer(bytes: colours, length: MemoryLayout<packed_float4>.stride * 100,options: [])!
+       
+        
+        instancedAccelerationStructureDC.instanceDescriptorBuffer = instancesBuffer
+        //instancedAccelerationStructureDC.instanceDescriptorStride = MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride
+        
+       
+        sizesIAC = device.accelerationStructureSizes(descriptor: instancedAccelerationStructureDC)
+
+        instancedAccelerationStructure = device.makeAccelerationStructure(descriptor: instancedAccelerationStructureDC)!
+        scratchBufferIAC = device.makeBuffer(length: sizesIAC.buildScratchBufferSize, options: .storageModePrivate)!
+        
+       
+        
+        // intersectionfunctions
+        
+        let library = device.makeDefaultLibrary()!
+        
+        let sphereIntersectionFunction = library.makeFunction(name: "sphereIntersection")!
+        let linkedFunctions = MTLLinkedFunctions()
+        linkedFunctions.functions = [sphereIntersectionFunction]
+        
+        
+        let rayTracingPipelineDC = MTLComputePipelineDescriptor()
+        let rayTracingFunction = library.makeFunction(name: "RayTracing_Instanced")!
+        rayTracingPipelineDC.computeFunction = rayTracingFunction
+        rayTracingPipelineDC.linkedFunctions = linkedFunctions
+        rayTracingPipelineDC.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
+        
+        rayTracingPipeline = try! device.makeComputePipelineState(descriptor: rayTracingPipelineDC, options: [], reflection: nil)
+        print(rayTracingPipeline.threadExecutionWidth)
+        
+        let functionTableDC = MTLIntersectionFunctionTableDescriptor()
+        functionTableDC.functionCount = 1
+        functionTable = rayTracingPipeline.makeIntersectionFunctionTable(descriptor: functionTableDC)!
+        let functionHandle = rayTracingPipeline.functionHandle(function: sphereIntersectionFunction)
+        functionTable.setFunction(functionHandle, index: 0)
+        
+        
+        
+        
+        
+        
     }
    
     // mtkView will automatically call this function
@@ -388,60 +554,50 @@ class Renderer : NSObject, MTKViewDelegate {
     
     
     func draw(in view: MTKView) {
-        
-        frameSephamore.wait()
-        frameConstants.viewMatrix = camera.cameraMatrix
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else {return}
-        commandBuffer.addCompletedHandler(){[self] _ in
-            frameSephamore.signal()
+        if(fps == 0){
+            print(view.drawableSize)
         }
         
        
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {return}
         
-        if(fps == 0){
-           
-            voxelizedMesh.voxelize(commandQueue: commandQueue)
-
-        }
+        guard let accelerationStructorEncoder = commandBuffer.makeAccelerationStructureCommandEncoder() else {return}
+        accelerationStructorEncoder.build(accelerationStructure: instancedAccelerationStructure, descriptor: instancedAccelerationStructureDC, scratchBuffer: scratchBufferIAC, scratchBufferOffset: 0)
         
-
+        accelerationStructorEncoder.build(accelerationStructure: accelerationStructure, descriptor: accelerationStructureDC, scratchBuffer: scratchBufferAC, scratchBufferOffset: 0)
+        
+        accelerationStructorEncoder.endEncoding()
+        
+      
         guard let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(1, 1, 1, 1)
-         renderPassDescriptor.depthAttachment.clearDepth = 1
-        renderPassDescriptor.depthAttachment.loadAction = .clear
+        //renderPassDescriptor.colorAttachments[0].storeAction = .dontCare
         
+        guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+        computeEncoder.setComputePipelineState(rayTracingPipeline)
+        computeEncoder.setTexture(drawableTexture, index: 0)
+        computeEncoder.setBuffer(colourBuffer, offset: 0, index: 10)
+        computeEncoder.setBytes(&rt_camera, length: MemoryLayout<RT_Camera>.stride, index: 11)
+        computeEncoder.useResource(accelerationStructure, usage: .read)
+        computeEncoder.setIntersectionFunctionTable(functionTable, bufferIndex: 1)
+        computeEncoder.setAccelerationStructure(instancedAccelerationStructure, bufferIndex: 0)
+        computeEncoder.dispatchThreads(drawableSize, threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+        computeEncoder.endEncoding()
         
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
-        renderEncoder.setDepthStencilState(depthStencilState)
-        renderEncoder.setFrontFacing(.counterClockwise)
-        renderEncoder.setCullMode(.back)
-         
-        renderEncoder.setRenderPipelineState(pipeline.m_pipeLine)
         
-        renderEncoder.setVertexBytes(&frameConstants, length: MemoryLayout<FrameConstants>.stride, index: vertexBufferIDs.frameConstant)
-         
-        //gridMesh.draw(renderEncoder: renderEncoder)
-        
-
-        voxelizedMesh.drawOriginalMesh(with: renderEncoder)
-        
-        voxelizedMesh.drawOpaqueGrid(with: renderEncoder)
-        
-        
+        renderEncoder.setRenderPipelineState(renderToScreenPipeline)
+        renderEncoder.setFragmentTexture(drawableTexture, index: 0)
+        renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         renderEncoder.endEncoding()
-        
-        
-
-        
-        
        
         
         
         commandBuffer.present(view.currentDrawable!)
        
         commandBuffer.commit()
-       
         fps+=1
+       
+        
         
         
 

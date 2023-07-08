@@ -10,6 +10,7 @@
 
 import Foundation
 import simd
+import Metal
 
 
 
@@ -164,6 +165,15 @@ func create_modelViewMatrix(modelMatrix : simd_float4x4, viewMatrix : simd_float
 
 func create_normalMatrix(modelViewMatrix : simd_float4x4) -> simd_float4x4 {
     return (modelViewMatrix.inverse).transpose
+}
+
+func create_translation_matix_packed(translate : simd_float3) -> MTLPackedFloat4x3 {
+    let x = MTLPackedFloat3Make(1, 0, 0)
+    let y = MTLPackedFloat3Make(0, 1, 0)
+    let z = MTLPackedFloat3Make(0, 0, 1)
+    let w = MTLPackedFloat3Make(translate.x,translate.y,translate.z)
+    let matrix = MTLPackedFloat4x3(columns: (x,y,z,w))
+    return matrix
 }
 
 

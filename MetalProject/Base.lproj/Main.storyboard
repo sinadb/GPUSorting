@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.Storyboard.XIB" version="3.0" toolsVersion="22113.3" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" initialViewController="B8D-0N-5wS">
+<document type="com.apple.InterfaceBuilder3.Cocoa.Storyboard.XIB" version="3.0" toolsVersion="32700.99.1234" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" initialViewController="B8D-0N-5wS">
     <dependencies>
-        <deployment identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="22113.3"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="22689"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
@@ -12,11 +11,11 @@
                 <application id="hnw-xV-0zn" sceneMemberID="viewController">
                     <menu key="mainMenu" title="Main Menu" systemMenu="main" id="AYu-sK-qS6">
                         <items>
-                            <menuItem title="MetalProject" id="1Xt-HY-uBw">
+                            <menuItem title="GPU_Sorting" id="1Xt-HY-uBw">
                                 <modifierMask key="keyEquivalentModifierMask"/>
-                                <menu key="submenu" title="MetalProject" systemMenu="apple" id="uQy-DD-JDr">
+                                <menu key="submenu" title="GPU_Sorting" systemMenu="apple" id="uQy-DD-JDr">
                                     <items>
-                                        <menuItem title="About MetalProject" id="5kV-Vb-QxS">
+                                        <menuItem title="About GPU_Sorting" id="5kV-Vb-QxS">
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>
                                                 <action selector="orderFrontStandardAboutPanel:" target="Ady-hI-5gd" id="Exp-CZ-Vem"/>
@@ -30,7 +29,7 @@
                                             <menu key="submenu" title="Services" systemMenu="services" id="hz9-B4-Xy5"/>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="4je-JR-u6R"/>
-                                        <menuItem title="Hide MetalProject" keyEquivalent="h" id="Olw-nP-bQN">
+                                        <menuItem title="Hide GPU_Sorting" keyEquivalent="h" id="Olw-nP-bQN">
                                             <connections>
                                                 <action selector="hide:" target="Ady-hI-5gd" id="PnN-Uc-m68"/>
                                             </connections>
@@ -48,7 +47,7 @@
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="kCx-OE-vgT"/>
-                                        <menuItem title="Quit MetalProject" keyEquivalent="q" id="4sb-4s-VLi">
+                                        <menuItem title="Quit GPU_Sorting" keyEquivalent="q" id="4sb-4s-VLi">
                                             <connections>
                                                 <action selector="terminate:" target="Ady-hI-5gd" id="Te7-pn-YzF"/>
                                             </connections>
@@ -632,6 +631,52 @@
                                     </items>
                                 </menu>
                             </menuItem>
+                            <menuItem title="sorting-setting" id="atZ-ZI-fFn">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <menu key="submenu" id="Jlv-jG-YNm">
+                                    <items>
+                                        <menuItem title="X-ascending" id="91i-5Z-UGo">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="SCQ-mP-jh3"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="X-descending" id="A3T-T6-NTw">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="rn1-oT-f4j"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Y-ascending" id="Mjv-z7-8Gc">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="EMD-Nr-FCz"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Y-descending" id="UuY-QR-lay">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="3D4-Nd-uAW"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Diagonal-ascending" id="IbJ-xD-Irl">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="08O-0M-ieJ"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Diagonal-descending" id="ODy-eU-hvQ">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="adjustSorting:" target="Ady-hI-5gd" id="czX-Fx-Kpy"/>
+                                            </connections>
+                                        </menuItem>
+                                    </items>
+                                </menu>
+                                <connections>
+                                    <action selector="adjustSortin:" target="Ady-hI-5gd" id="0NR-Qd-jaL"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Window" id="aUF-d1-5bR">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Window" systemMenu="window" id="Td7-aD-5lo">
@@ -661,7 +706,7 @@
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Help" systemMenu="help" id="F2S-fz-NVQ">
                                     <items>
-                                        <menuItem title="MetalProject Help" keyEquivalent="?" id="FKE-Sm-Kum">
+                                        <menuItem title="GPU_Sorting Help" keyEquivalent="?" id="FKE-Sm-Kum">
                                             <connections>
                                                 <action selector="showHelp:" target="Ady-hI-5gd" id="y7X-2Q-9no"/>
                                             </connections>
@@ -679,7 +724,7 @@
                 <customObject id="YLy-65-1bz" customClass="NSFontManager"/>
                 <customObject id="Ady-hI-5gd" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="75" y="0.0"/>
+            <point key="canvasLocation" x="5" y="10"/>
         </scene>
         <!--Window Controller-->
         <scene sceneID="R2V-B0-nI4">
@@ -700,7 +745,7 @@
                 </windowController>
                 <customObject id="Oky-zY-oP4" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="75" y="250"/>
+            <point key="canvasLocation" x="35" y="255"/>
         </scene>
         <!--View Controller-->
         <scene sceneID="hIz-AP-VOD">
@@ -710,45 +755,88 @@
                         <rect key="frame" x="0.0" y="0.0" width="800" height="800"/>
                         <autoresizingMask key="autoresizingMask"/>
                         <subviews>
-                            <containerView wantsLayer="YES" focusRingType="exterior" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="zJj-JG-HHW" userLabel="Menu" colorLabel="IBBuiltInLabel-Red">
-                                <rect key="frame" x="0.0" y="250" width="225" height="150"/>
-                                <autoresizingMask key="autoresizingMask"/>
-                                <animations>
-                                    <caTransition key="subviews">
-                                        <mutableData key="keyedArchiveRepresentation">
-YnBsaXN0MDDUAQIDBAUGBwpYJHZlcnNpb25ZJGFyY2hpdmVyVCR0b3BYJG9iamVjdHMSAAGGoF8QD05T
-S2V5ZWRBcmNoaXZlctEICVRyb290gAGpCwwVFhcPDh0jVSRudWxs1A0ODxAREhMUViRjbGFzc1R0eXBl
-V3N1YnR5cGVfEBJfX0NBQ29kaW5nQ29udGVudHOACIADgAKABFdmcm9tVG9wVm1vdmVJbtIYDRkcWk5T
-Lm9iamVjdHOiGhuABYAGgAfSHh8gIVokY2xhc3NuYW1lWCRjbGFzc2VzV05TQXJyYXmiICJYTlNPYmpl
-Y3TSHh8kJVxDQVRyYW5zaXRpb26jJiciXENBVHJhbnNpdGlvbltDQUFuaW1hdGlvbgAIABEAGgAkACkA
-MgA3AEkATABRAFMAXQBjAGwAcwB4AIAAlQCXAJkAmwCdAKUArACxALwAvwDBAMMAxQDKANUA3gDmAOkA
-8gD3AQQBCAEVAAAAAAAAAgEAAAAAAAAAKAAAAAAAAAAAAAAAAAAAASE
-</mutableData>
-                                    </caTransition>
-                                </animations>
+                            <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="UhM-Nm-xGk">
+                                <rect key="frame" x="18" y="450" width="67" height="16"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" lineBreakMode="clipping" title="Radix Sort" id="kvO-MT-KQx">
+                                    <font key="font" usesAppearanceFont="YES"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
+                            </textField>
+                            <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="YNT-bv-hsn">
+                                <rect key="frame" x="18" y="350" width="95" height="16"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" lineBreakMode="clipping" title="Odd-Even Sort" id="4m3-Ks-BWo">
+                                    <font key="font" metaFont="system"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
+                            </textField>
+                            <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="su7-fu-54E">
+                                <rect key="frame" x="709" y="450" width="72" height="16"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" lineBreakMode="clipping" title="Merge Sort" id="RtD-P6-JAG">
+                                    <font key="font" metaFont="system"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
+                            </textField>
+                            <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="x4s-UP-vDJ">
+                                <rect key="frame" x="713" y="350" width="68" height="16"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" lineBreakMode="clipping" title="Quick Sort" id="dxS-t4-i05">
+                                    <font key="font" metaFont="system"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
+                            </textField>
+                            <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="on3-eH-uM7">
+                                <rect key="frame" x="387" y="425" width="26" height="16"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" lineBreakMode="clipping" alignment="center" title="Fps" id="QtI-6F-Oih">
+                                    <font key="font" metaFont="system"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
+                            </textField>
+                            <textField verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="lLq-na-w2m">
+                                <rect key="frame" x="352" y="396" width="96" height="21"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" alignment="center" title="120" drawsBackground="YES" id="KFa-z0-0tw">
+                                    <font key="font" metaFont="system"/>
+                                    <color key="textColor" name="gridColor" catalog="System" colorSpace="catalog"/>
+                                    <color key="backgroundColor" name="systemGrayColor" catalog="System" colorSpace="catalog"/>
+                                </textFieldCell>
                                 <connections>
-                                    <segue destination="kbU-kl-spO" kind="embed" id="cre-Jp-NF8"/>
+                                    <action selector="adjustFrameRate:" target="XfG-lQ-9wD" id="m2c-k3-siu"/>
                                 </connections>
-                            </containerView>
+                            </textField>
                         </subviews>
                     </view>
+                    <connections>
+                        <outlet property="FrameRate" destination="lLq-na-w2m" id="i7F-6n-Sal"/>
+                    </connections>
                 </viewController>
                 <customObject id="rPt-NT-nkU" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
             <point key="canvasLocation" x="75" y="655"/>
         </scene>
         <!--View Controller-->
-        <scene sceneID="u5a-xU-Y3M">
+        <scene sceneID="PAh-gZ-fEq">
             <objects>
-                <viewController id="kbU-kl-spO" sceneMemberID="viewController">
-                    <view key="view" id="eoE-bF-Kyf">
-                        <rect key="frame" x="0.0" y="0.0" width="800" height="800"/>
+                <viewController id="8q0-eY-Af3" sceneMemberID="viewController">
+                    <view key="view" id="XMx-nw-PGF">
+                        <rect key="frame" x="0.0" y="0.0" width="450" height="300"/>
                         <autoresizingMask key="autoresizingMask"/>
                     </view>
+                    <connections>
+                        <outlet property="view" destination="XMx-nw-PGF" id="7bs-ii-Ggp"/>
+                    </connections>
                 </viewController>
-                <customObject id="Mpj-pf-Ifr" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
+                <customObject id="E7W-Qa-Ziz" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="-212" y="-439"/>
+            <point key="canvasLocation" x="-41" y="1282"/>
         </scene>
     </scenes>
 </document>

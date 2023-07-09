@@ -10,14 +10,55 @@ import Metal
 import MetalKit
 
 
+
+
+class custom_Timer {
+    var timer : Timer? = nil
+    let key : UInt16
+    var increment : Float
+    let direction : simd_float3
+    let interval : Double = 1/60
+    init(key : UInt16, increment : Float){
+        self.key = key
+        self.increment = increment
+        if(key == Keycode.w || key == Keycode.s){
+            direction = increment * simd_float3(0,0,1)
+        }
+        else if(key == Keycode.a || key == Keycode.d){
+            direction = increment * simd_float3(1,0,0)
+        }
+        else{
+            direction = increment * simd_float3(0,1,0)
+        }
+        
+    }
+    func run(keyDown : Bool, camera : Camera){
+        
+        if((!keyDown) && (timer != nil)){
+            timer?.invalidate()
+            timer = nil
+            return
+        }
+        
+        if((timer == nil) && keyDown){
+            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true){[self] _ in
+                camera.update_eye(with: direction)
+            }
+        }
+    }
+    
+    
+}
+
+
 var mouse_x : Float?
 var mouse_y : Float?
 
 class ViewController: NSViewController {
-    
+   
     var cameraOrigin : simd_float3?
     var cameraDirection : simd_float3?
-    
+    let camerakeyHandler : [UInt16 : custom_Timer] = [Keycode.w : custom_Timer(key: Keycode.w, increment: -1.0/60), Keycode.s : custom_Timer(key: Keycode.s, increment: 1.0/60), Keycode.d : custom_Timer(key: Keycode.d, increment: 1.0/60), Keycode.a : custom_Timer(key: Keycode.a, increment: -1.0/60), Keycode.q : custom_Timer(key: Keycode.q, increment: 1.0/60), Keycode.e : custom_Timer(key: Keycode.e, increment: -1.0/60)]
     var cameraState : Bool = false {
         didSet {
             
@@ -37,9 +78,63 @@ class ViewController: NSViewController {
     @IBOutlet weak var yEye: NSTextField!
     @IBOutlet weak var zEye: NSTextField!
     
+    @IBOutlet weak var FrameRate: NSTextField!
     @IBOutlet weak var testOrigin: NSTextField!
     
     @IBOutlet weak var testDirection: NSTextField!
+    
+    @IBAction func adjustFrameRate(_ sender: NSTextField) {
+        renderer.frameRate = sender.integerValue
+    }
+    
+    @IBAction func adjustSorting(_ sender: NSMenuItem) {
+        switch sender.title {
+        case "X-ascending":
+            print("x-up")
+            if(renderer.sorting_setting != .X_ascending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .X_ascending
+            }
+            break
+        case "X-descending":
+            if(renderer.sorting_setting != .X_descending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .X_descending
+            }
+            print("x_down")
+            break
+        case "Y-ascending":
+            if(renderer.sorting_setting != .Y_ascending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .Y_ascending
+            }
+            print("y_up")
+            break
+        case "Y-descending":
+            if(renderer.sorting_setting != .Y_descending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .Y_descending
+            }
+            print("y-down")
+            break
+        case "Diagonal-ascending":
+            if(renderer.sorting_setting != .diagonal_ascending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .diagonal_ascending
+            }
+            print("diagonal-up")
+            break
+        case "Diagonal-descending":
+            if(renderer.sorting_setting != .diagonal_descending){
+                renderer.sorting_setting_changed = true
+                renderer.sorting_setting = .diagonal_descending
+            }
+            print("diagonal-down")
+            break
+        default:
+            break
+        }
+    }
     
     @IBAction func updateCamera(_ sender: NSTextField) {
         
@@ -75,131 +170,87 @@ class ViewController: NSViewController {
     var mtkView: MTKView!
     var renderer: Renderer!
     
-//    override func mouseMoved(with event: NSEvent) {
-//        if mouse_x == nil && mouse_y == nil {
-//            mouse_x = Float(event.locationInWindow.x)
-//            mouse_y = Float(event.locationInWindow.y)
-//            renderer.testCamera.previous_x = mouse_x
-//            renderer.testCamera.previous_y = mouse_y
-//        }
-//        else {
-//            //print(event.locationInWindow.y,event.locationInWindow.x)
-//            mouse_x = Float(event.locationInWindow.x)
-//            mouse_y = Float(event.locationInWindow.y)
-//            renderer.testCamera.update()
-//        }
-//    }
     override func mouseUp(with event: NSEvent) {
-        for camera in renderer.cameraLists{
-            camera.reset_mouse()
-
-        }
+//        renderer.rt_camera.reset_mouse()
+//        renderer.cameraBeingChanged = false
     }
     
     override func mouseDragged(with event: NSEvent) {
-        let pos = simd_float2(Float(event.locationInWindow.x),Float(event.locationInWindow.y))
-        for camera in renderer.cameraLists{
-            camera.update_mouse(with: pos)
-
-        }
+//        renderer.cameraBeingChanged = true
+//        let pos = simd_float2(Float(event.locationInWindow.x),Float(event.locationInWindow.y))
+//        renderer.rt_camera.update_mouse(with: pos)
     }
    
     
     func myKeyDownEvent(event: NSEvent) -> NSEvent
     {
+        
         switch event.keyCode {
-        case Keycode.space:
-            if(renderer.moveTriangle){
-                renderer.moveTriangle = false
-            }
-            else {
-                renderer.moveTriangle = true
-            }
-            break
-        case Keycode.q:
-            if(renderer.moveTriangle){
-              
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(0,0,1))
-                }
-            }
-            break
-        case Keycode.e:
-            if(renderer.moveTriangle){
-               
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(0,0,-1))
-                }
-            }
-            break
+        case Keycode.z:
             
-        case Keycode.w:
-            if(renderer.moveTriangle){
-                
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(0,1,0))
-                    
-                }
-            }
             break
-        case Keycode.w:
-            if(renderer.moveTriangle){
-               
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(0,1,0))
-                }
-            }
-        case Keycode.s:
-            if(renderer.moveTriangle){
-                
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(0,-1,0))
-                }
-            }
-           
-            break
-        case Keycode.a:
-            if(renderer.moveTriangle){
-               
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(-1,0,0))
-                    
-                }
-            }
-           
-            break
-        case Keycode.d:
-            if(renderer.moveTriangle){
-                
-            }
-            else{
-                for camera in renderer.cameraLists{
-                    camera.update_eye(with: simd_float3(1,0,0))
-                    
-                }
-            }
+        case Keycode.x:
             break
         default:
             break
         }
-        
+//        switch event.keyCode {
+//        case Keycode.one:
+//            renderer.samplingFunctionIndex = 0
+//            renderer.restart = true
+//            break
+//        case Keycode.two:
+//            renderer.samplingFunctionIndex = 1
+//            renderer.restart = true
+//            break
+//        case Keycode.w:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.w]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        case Keycode.s:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.s]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        case Keycode.a:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.a]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        case Keycode.d:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.d]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        case Keycode.q:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.q]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        case Keycode.e:
+//            renderer.cameraBeingChanged = true
+//            camerakeyHandler[Keycode.e]?.run(keyDown: true, camera: renderer.rt_camera)
+//            break
+//        default:
+//            break
+//        }
+//
         return event
     }
+    
+    
+    func myKeyUpEvent(event: NSEvent) -> NSEvent
+    {
+        
+//        if(event.keyCode == Keycode.w || event.keyCode == Keycode.s || event.keyCode == Keycode.a || event.keyCode == Keycode.d || event.keyCode == Keycode.q || event.keyCode == Keycode.e){
+//            for (_, value) in camerakeyHandler {
+//                value.run(keyDown: false, camera: renderer.camera)
+//            }
+//            renderer.cameraBeingChanged = false
+//        }
+        return event
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         NSEvent.addLocalMonitorForEvents(matching: NSEvent.EventTypeMask.keyDown, handler: myKeyDownEvent)
+       NSEvent.addLocalMonitorForEvents(matching: NSEvent.EventTypeMask.keyUp, handler: myKeyUpEvent)
         let ta = NSTrackingArea(rect: CGRect.zero, options: [.activeAlways, .inVisibleRect, .mouseMoved], owner: self, userInfo: nil)
         self.view.addTrackingArea(ta)
         
@@ -212,6 +263,7 @@ class ViewController: NSViewController {
         }
         
         mtkView = mtkViewTemp
+        mtkView.framebufferOnly = false
         //mtkView.drawableSize = CGSize(width: 800, height: 800)
        
         

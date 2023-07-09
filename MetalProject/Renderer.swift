@@ -9,325 +9,44 @@ import Foundation
 import Metal
 import MetalKit
 import AppKit
+import MetalFX
 
 
+enum GPU_Sorting : UInt32 {
+    case X_ascending = 0
+    case Y_ascending = 1
+    case X_descending = 2
+    case Y_descending = 3
+    case diagonal_ascending = 4
+    case diagonal_descending = 5
+};
 
-func createGenericPipeline(device : MTLDevice, vertexStageName : String, fragmentStageName : String, drawableColourFormat : MTLPixelFormat) -> MTLRenderPipelineState {
+enum sorting_order : UInt32 {
+   case ascending = 0, descending
+}
+
+
+func createComputePipeline(device : MTLDevice, with functionName : String) throws -> MTLComputePipelineState {
+    let library = device.makeDefaultLibrary()!
+    let computeFunction = library.makeFunction(name: functionName)!
     
-    let library = device.makeDefaultLibrary()
-    let pipelineDC = MTLRenderPipelineDescriptor()
-    pipelineDC.vertexFunction = library?.makeFunction(name: vertexStageName)
-    pipelineDC.fragmentFunction = library?.makeFunction(name: fragmentStageName)
-    pipelineDC.colorAttachments[0].pixelFormat = drawableColourFormat
-    pipelineDC.depthAttachmentPixelFormat = .depth32Float
-    
-    
-    return try! device.makeRenderPipelineState(descriptor: pipelineDC)
-    
-   
+    do {
+        return try device.makeComputePipelineState(function: computeFunction)
+    }
+    catch {
+        print("Failed to init pipeline with function name : \(functionName)")
+        throw error
+    }
+
     
 }
 
 
-
-class skyBoxScene {
-    var fps = 0
-    var translateFirst = 0
-    var rotateFirst = 1
-    var False = false
-    var True = true
-    var centreOfReflection : simd_float3
-    var camera : Camera
-    var projection : simd_float4x4
-    var nodes = [Mesh]()
-    var skyBoxMesh : Mesh
-    var reflectiveNodeMesh : Mesh?
-   
-    var reflectiveNodeInitialState = [simd_float3]()
-    var current_node = 0
-    // use these to render to cubeMap
-    var renderToCubeframeConstants = [FrameConstants]()
-    
-    // use this to render the skybox and the final pass
-    var frameConstants : FrameConstants
-
-
-    // pipelines
-    var renderToCubePipelineForSkyBox : pipeLine?
-    var renderToCubePipelineForMesh : pipeLine?
-    var simplePipeline : pipeLine?
-    var renderSkyboxPipeline : pipeLine?
-    var renderReflectionPipleline : pipeLine?
-   
-    let device : MTLDevice
-
-    var renderTarget : Texture?
-    var depthRenderTarget : MTLTexture?
-
-    var commandQueue : MTLCommandQueue
-    var view : MTKView
-    var depthStencilState : MTLDepthStencilState
-    var sampler : MTLSamplerState
-    var directionalLight : simd_float3?
-    var cameraChanged = false
-    
-    
-
-    func initiatePipeline(){
-        let posAttrib = Attribute(format: .float4, offset: 0, length: 16, bufferIndex: 0)
-        let normalAttrib = Attribute(format: .float3, offset: MemoryLayout<Float>.stride*4,length: 12, bufferIndex: 0)
-        let texAttrib = Attribute(format: .float2, offset: MemoryLayout<Float>.stride*7, length : 8, bufferIndex: 0)
-        let tangentAttrib = Attribute(format: .float4, offset: MemoryLayout<Float>.stride*9, length: 16, bufferIndex: 0)
-        let bitangentAttrib = Attribute(format: .float4, offset: MemoryLayout<Float>.stride*13, length: 16, bufferIndex: 0)
-
-        let instanceAttrib = Attribute(format : .float3, offset: 0, length : 12, bufferIndex: 1)
-        let vertexDescriptor = createVertexDescriptor(attributes: posAttrib,normalAttrib,texAttrib,tangentAttrib,bitangentAttrib)
-
-        // render world into cubemap
-        
-        let FC = functionConstant()
-        
-        FC.setValue(type: .bool, value: &False, at: FunctionConstantValues.constant_colour)
-        FC.setValue(type: .bool, value: &True, at: FunctionConstantValues.cube)
-        
-       
-    
-        
-        renderToCubePipelineForSkyBox  = pipeLine(device, "vertexRenderToCube", "fragmentRenderToCube", vertexDescriptor, true,amplificationCount: 6,functionConstant: FC.functionConstant,label: "RenderToCubePipeline")
-      
-        
-        
-        FC.setValue(type: .bool, value: &True, at: FunctionConstantValues.constant_colour)
-        FC.setValue(type: .bool, value: &False, at: FunctionConstantValues.cube)
-        
-        renderToCubePipelineForMesh = pipeLine(device, "vertexRenderToCube", "fragmentRenderToCube", vertexDescriptor, true,amplificationCount: 6,functionConstant: FC.functionConstant,label: "RenderToCubePipeline")
-        
-        // simple pipeline for the final pass
-
-       
-        simplePipeline = pipeLine(device, "vertexSimpleShader", "fragmentSimpleShader", vertexDescriptor,false,label: "simpleShaderPipeline")
-
-
-        // render the reflections using cubemap
-      
-        renderReflectionPipleline = pipeLine(device, "vertexRenderCubeReflection", "fragmentRenderCubeReflection", vertexDescriptor, false, label: "renderCubeMapReflection")
-        
-        // pipeline for rendering skybox
-
-        renderSkyboxPipeline = pipeLine(device, "vertexRenderSkyBox", "fragmentRenderSkyBox", vertexDescriptor, false, label: "SkyboxPipeline")
-
-    }
-
-    func initialiseRenderTarget(){
-        let textureDescriptor = MTLTextureDescriptor()
-        textureDescriptor.pixelFormat = .bgra8Unorm_srgb
-        textureDescriptor.textureType = .typeCube
-        textureDescriptor.width = 1200
-        textureDescriptor.height = 1200
-        textureDescriptor.storageMode = .private
-        textureDescriptor.mipmapLevelCount = 8
-        textureDescriptor.usage = [.shaderRead,.renderTarget]
-        var renderTargetTexture = device.makeTexture(descriptor: textureDescriptor)
-        textureDescriptor.pixelFormat = .depth32Float
-        depthRenderTarget = device.makeTexture(descriptor: textureDescriptor)
-        renderTarget = Texture(texture: renderTargetTexture!, index: textureIDs.cubeMap)
-    }
-
-    init(device : MTLDevice, at view : MTKView, from centreOfReflection: simd_float3, attachTo camera : Camera, with projection : simd_float4x4) {
-        self.device = device
-        self.centreOfReflection = centreOfReflection
-        self.camera = camera
-        self.projection = projection
-        commandQueue = device.makeCommandQueue()!
-        self.view = view
-
-        // make depthstencil state
-        let depthStencilDescriptor = MTLDepthStencilDescriptor()
-        depthStencilDescriptor.isDepthWriteEnabled = true
-        depthStencilDescriptor.depthCompareFunction = .lessEqual
-        depthStencilState = device.makeDepthStencilState(descriptor: depthStencilDescriptor)!
-
-        // create a samplerState
-        let samplerDescriptor = MTLSamplerDescriptor()
-        samplerDescriptor.magFilter = .linear
-        samplerDescriptor.minFilter = .linear
-        samplerDescriptor.rAddressMode = .repeat
-        samplerDescriptor.sAddressMode = .repeat
-        samplerDescriptor.tAddressMode = .repeat
-        samplerDescriptor.normalizedCoordinates = True
-        sampler = device.makeSamplerState(descriptor: samplerDescriptor)!
-        
-        
-        frameConstants = FrameConstants(viewMatrix: self.camera.cameraMatrix, projectionMatrix: projection)
-        
-        let allocator = MTKMeshBufferAllocator(device: device)
-        let cubeMDLMesh = MDLMesh(boxWithExtent: simd_float3(1,1,1), segments: simd_uint3(1,1,1), inwardNormals: false, geometryType: .triangles, allocator: allocator)
-        skyBoxMesh = Mesh(device: device, Mesh: cubeMDLMesh)!
-        let frameConstantBuffer = device.makeBuffer(bytes: &frameConstants, length: MemoryLayout<FrameConstants>.stride,options: [])
-        //skyBoxMesh.addUniformBuffer(buffer: UniformBuffer(buffer: frameConstantBuffer!, index: vertexBufferIDs.frameConstant))
-
-       
-
-       
-        
-        initiatePipeline()
-        initialiseRenderTarget()
-        
-    }
-
-//    func attach_camera_to_scene(camera : Camera){
-//        sceneCamera = camera
-//    }
-
-
-
-    func addDirectionalLight(with direction : simd_float3){
-        directionalLight = direction
-    }
-
-    func addNodes(mesh : Mesh){
-        // firest pass nodes are being rendered from the centre of reflection
-        
-        mesh.init_instance_buffers(with: camera.cameraMatrix)
-        nodes.append(mesh)
-        
-      
-
-    }
-
-    func addReflectiveNode(mesh : Mesh, with size : Float){
-        
-        reflectiveNodeMesh = mesh
-        let modelMatrix = create_modelMatrix(rotation: simd_float3(0), translation: centreOfReflection, scale: simd_float3(size))
-        reflectiveNodeMesh?.createInstance(with: modelMatrix)
-        reflectiveNodeMesh?.init_instance_buffers(with: self.camera.cameraMatrix)
-        reflectiveNodeMesh?.add_textures(texture: renderTarget!)
-        
-        let projection = simd_float4x4(fovRadians: 3.14/2, aspectRatio: 1, near: size, far: 100)
-        
-        var cameraArray = [simd_float4x4]()
-        
-        cameraArray.append(simd_float4x4(eye: centreOfReflection, center: simd_float3(1,0,0) + centreOfReflection , up: simd_float3(0,-1,0)))
-                           
-        cameraArray.append(simd_float4x4(eye: centreOfReflection, center: simd_float3(-1,0,0) + centreOfReflection , up: simd_float3(0,-1,0)))
-        
-        cameraArray.append(simd_float4x4(eye: centreOfReflection,  center: simd_float3(0,-1,0) + centreOfReflection , up: simd_float3(0,0,-1)))
-           
-        cameraArray.append(simd_float4x4(eye: centreOfReflection, center: simd_float3(0,1,0) + centreOfReflection , up: simd_float3(0,0,1)))
-                           
-        cameraArray.append(simd_float4x4(eye: centreOfReflection, center: simd_float3(0,0,1) + centreOfReflection , up: simd_float3(0,-1,0)))
-                   
-        cameraArray.append(simd_float4x4(eye: centreOfReflection, center: simd_float3(0,0,-1) + centreOfReflection, up: simd_float3(0,-1,0)))
-                   
-        
-        for i in 0..<6{
-            renderToCubeframeConstants.append(FrameConstants(viewMatrix: cameraArray[i], projectionMatrix: projection))
-        }
-     
-    }
-
-    func setSkyMapTexture(with texture : Texture){
-        skyBoxMesh.add_textures(texture: texture)
-    }
-
-
-
-    func renderScene(){
-        
-        frameConstants.viewMatrix = camera.cameraMatrix
-        if(cameraChanged){
-            for mesh in nodes {
-                mesh.updateNormalMatrix(with: frameConstants.viewMatrix)
-
-            }
-            cameraChanged = false
-        }
-
-        fps += 1
-          guard let commandBuffer = commandQueue.makeCommandBuffer() else {return}
-        guard let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
-        renderPassDescriptor.colorAttachments[0].texture = renderTarget?.texture
-        renderPassDescriptor.depthAttachment.texture = depthRenderTarget!
-        renderPassDescriptor.colorAttachments[0].storeAction = .store
-        renderPassDescriptor.colorAttachments[0].loadAction = .clear
-        renderPassDescriptor.depthAttachment.loadAction = .clear
-        renderPassDescriptor.depthAttachment.clearDepth = 1
-        renderPassDescriptor.renderTargetArrayLength = 6
-        
-        // render to cubempa pass
-        guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
-        renderEncoder.setRenderPipelineState(renderToCubePipelineForMesh!.m_pipeLine)
-        renderEncoder.setDepthStencilState(depthStencilState)
-        renderEncoder.setVertexAmplificationCount(6, viewMappings: nil)
-        renderEncoder.setVertexBytes(&renderToCubeframeConstants, length: MemoryLayout<FrameConstants>.stride*6, index: vertexBufferIDs.frameConstant)
-        
-        
-        for mesh in nodes {
-            //mesh.rotateMesh(with: simd_float3(0,Float(fps)*0.2,0), and: camera.cameraMatrix)
-            mesh.draw(renderEncoder: renderEncoder)
-        }
-        
-        renderEncoder.setRenderPipelineState(renderToCubePipelineForSkyBox!.m_pipeLine)
-        skyBoxMesh.draw(renderEncoder: renderEncoder, with: 1)
-        
-        renderEncoder.endEncoding()
-        
-        guard let mipRenderEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
-        mipRenderEncoder.generateMipmaps(for: renderTarget!.texture)
-        mipRenderEncoder.endEncoding()
-        
-        
-        
-        guard let finalRenderPassDescriptor = view.currentRenderPassDescriptor else {return}
-        finalRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(1, 1, 1, 1)
-        finalRenderPassDescriptor.depthAttachment.clearDepth = 1
-       finalRenderPassDescriptor.depthAttachment.loadAction = .clear
-//
-        guard let finalRenderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalRenderPassDescriptor) else {return}
-        finalRenderEncoder.setDepthStencilState(depthStencilState)
-        finalRenderEncoder.setFrontFacing(.counterClockwise)
-        
-        finalRenderEncoder.setRenderPipelineState(renderReflectionPipleline!.m_pipeLine)
-        finalRenderEncoder.setVertexBytes(&frameConstants, length: MemoryLayout<FrameConstants>.stride, index: vertexBufferIDs.frameConstant)
-        finalRenderEncoder.setFragmentBytes(&self.camera.eye, length: 16, index: 0)
-        
-        // render reflective mesh
-        reflectiveNodeMesh?.draw(renderEncoder: finalRenderEncoder,with: 1, culling: .back)
-
-        // render the meshes
-        
-        finalRenderEncoder.setRenderPipelineState(simplePipeline!.m_pipeLine)
-        
-        var eyeSpaceLightDirection = camera.cameraMatrix * simd_float4(directionalLight!.x,directionalLight!.y,directionalLight!.z,0)
-        
-        finalRenderEncoder.setFragmentBytes(&eyeSpaceLightDirection, length: 16, index: vertexBufferIDs.lightPos)
-        for mesh in nodes {
-            mesh.draw(renderEncoder: finalRenderEncoder,culling: .back)
-        }
-
-        
-        // render the skybox
-        
-        finalRenderEncoder.setRenderPipelineState(renderSkyboxPipeline!.m_pipeLine)
-        skyBoxMesh.draw(renderEncoder: finalRenderEncoder, with: 1, culling: .front)
-
-        finalRenderEncoder.endEncoding()
-
-        commandBuffer.present(view.currentDrawable!)
-        commandBuffer.commit()
-
-
-
-    }
+func getAlignedMemory<T>(for type : T, with alignment : Int, count : Int) -> Int {
+    let size = count * MemoryLayout<T>.stride
+    //print(size)
+    return size - (size & (alignment - 1)) + alignment
 }
-
-
-
-
-
-
-
-
 
 
 
@@ -336,277 +55,1062 @@ class Renderer : NSObject, MTKViewDelegate {
   
     
  
-    let True = true
-    let False = false
+    var True = true
+    var False = false
    
     
     let device: MTLDevice
     let commandQueue : MTLCommandQueue
-    var cameraLists = [Camera]()
-    
-    let pipeline : pipeLine
-   
-    var frameSephamore = DispatchSemaphore(value: 1)
+    let drawToScreenPipeline : MTLRenderPipelineState
     var fps = 0
-     var frameConstants = FrameConstants(viewMatrix: simd_float4x4(eye: simd_float3(0), center: simd_float3(0,0,-1), up: simd_float3(0,1,0)) , projectionMatrix: simd_float4x4(fovRadians: 3.14/2, aspectRatio: 2.0, near: 0.1, far: 50))
-    
-    let depthStencilState : MTLDepthStencilState
-    
-    
-     var moveTriangle : Bool = true
+      
+    // kernel for RGB to HSV conversion
+    let RGBToHSVConversionKernel : MTLComputePipelineState
     
     
-   
-    let gridMesh : GridMesh
-    var camera : Camera
-     
-    var length : Float = 0.06
-    let minBound = simd_float3(-3,-3,-16)
-    let maxBound = simd_float3(3,3,-10)
-    let voxelizedMesh : Voxel
+    // kernel for HSV to RGB conversion
+    let HSVToRGBConversionKernel : MTLComputePipelineState
     
     
     
-    let renderToScreenPipeline : MTLRenderPipelineState
-    let rayTracingPipeline : MTLComputePipelineState
-    let drawableTexture : MTLTexture
-    let drawableSize = MTLSize(width: 800, height: 800, depth: 1)
-    var spheres = [Sphere(origin: simd_float3(0,0,0), colour: simd_float3(1,0,0), radiusSquared: 0.25, radius: 0.5)]
-   
-    var BB = MTLAxisAlignedBoundingBox(min: MTLPackedFloat3Make(-0.5, -0.5, -0.5), max: MTLPackedFloat3Make(0.5, 0.5, 0.5))
+    //let testRadixSortPipeline : MTLComputePipelineState
+  
     
     
-    let accelerationStructureDC : MTLPrimitiveAccelerationStructureDescriptor
-    let accelerationStructure : MTLAccelerationStructure
-    
-    let functionTable : MTLIntersectionFunctionTable
-    let scratchBufferAC : MTLBuffer
-    let sizesAC : MTLAccelerationStructureSizes
-    
-    
-    let instancedAccelerationStructureDC : MTLInstanceAccelerationStructureDescriptor
-    let instancedAccelerationStructure : MTLAccelerationStructure
-    let scratchBufferIAC : MTLBuffer
-    let sizesIAC : MTLAccelerationStructureSizes
-    let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true){_ in
-        print("Timer")
+    var mergeSortPipeline_test : MTLComputePipelineState
+    var mergeSortTextures_test = [MTLTexture]()
+    var sliceLength_test : UInt32 = 1
+    var max_sliceLength : UInt32 {
+        return UInt32(pow(2,ceil(log2(Float(globalTextureToBeSortedSize))))) / 2
     }
-    var colours = [packed_float4]()
-    let colourBuffer : MTLBuffer
-    var rt_camera = RT_Camera(origin: simd_float3(6,0,0), right: simd_float3(1,0,0), up: simd_float3(0,1,0), forward: simd_float3(-2,0,-1))
+    let visibleFunctionTableForMergeSort : MTLVisibleFunctionTable
     
+    
+    
+    var radixSort_lsbComputePipeline : MTLComputePipelineState
+    
+    
+    var radixSortTextures = [MTLTexture]()
+    
+    var radixSortThreadCount : Int {
+        return 32
+    }
+    
+    // default is always X.ascending
+    var sorting_setting : GPU_Sorting?
+    
+    
+    var quickSortComputePipeline : MTLComputePipelineState
+    var quickSortTextures = [MTLTexture]()
+    var quickSortPivotBuffersGPUSide = [MTLBuffer]()
+    var quickSortPivotBufferCPUSide : MTLBuffer
+    var quickSortOffsetBuffers = [MTLBuffer]()
+    var quickSortTGCount = 1
+
+    var previousSubArrayCount : Int  = 0
+    var ptrToQuickSortPivotBuffer : UnsafeMutablePointer<simd_uint3> {
+        return quickSortPivotBuffersGPUSide[0].contents().bindMemory(to: simd_uint3.self, capacity: globalTextureToBeSortedSize * 2)
+    }
+    
+    
+    var odd_evenComputePipelineState : MTLComputePipelineState
+    var odd_evenTextures = [MTLTexture]()
+    
+    let globalTextureToBeSorted : MTLTexture
+    let globalTextureToBeSortedSize = 1024
+    let fence : MTLFence
+    
+    var sorting_setting_changed = false
+    
+    
+    func resetBuffersAndTextures(){
+        let pixelCount = globalTextureToBeSortedSize * globalTextureToBeSortedSize * 4
+        var globalTextureData = [UInt8](repeating: 0, count: pixelCount)
+        for i in stride(from: 0, to: pixelCount, by: 4){
+            let r = UInt8.random(in: 0...255)
+            let g = UInt8.random(in: 0...255)
+            let b = UInt8.random(in: 0...255)
+            globalTextureData[i + 0] = r
+            globalTextureData[i + 1] = g
+            globalTextureData[i + 2] = b
+            globalTextureData[i + 3] = 255
+        }
+        fps = 0
+        // copy the content of global texture to the inputs first
+        let region = MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1))
+        let bytesPerRow = 4 * globalTextureToBeSortedSize
+        quickSortTextures[0].replace(region: region, mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: bytesPerRow)
+        mergeSortTextures_test[0].replace(region: region, mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: bytesPerRow)
+        radixSortTextures[0].replace(region: region, mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: bytesPerRow)
+        odd_evenTextures[0].replace(region: region, mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: bytesPerRow)
+        
+        
+        // the only other things we need to change are the buffers for the quicksort
+        quickSortPivotBufferCPUSide = device.makeBuffer(length: MemoryLayout<PivotBuffer>.stride * pixelCount)!
+        quickSortPivotBuffersGPUSide[0] = device.makeBuffer(length: MemoryLayout<PivotBuffer>.stride * pixelCount)!
+        quickSortPivotBuffersGPUSide[1] = device.makeBuffer(length: MemoryLayout<PivotBuffer>.stride * pixelCount)!
+        
+        let ptrToPivotBuffer = quickSortPivotBuffersGPUSide[0].contents().bindMemory(to: PivotBuffer.self, capacity: globalTextureToBeSortedSize * globalTextureToBeSortedSize)
+       
+        for i in 0..<globalTextureToBeSortedSize {
+            switch sorting_setting {
+            case .X_ascending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(0),Int32(i)), end_index: simd_int2(Int32(globalTextureToBeSortedSize),Int32(i)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+            case .Y_ascending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i),Int32(0)), end_index: simd_int2(Int32(i),Int32(globalTextureToBeSortedSize)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            case .X_descending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(0),Int32(i)), end_index: simd_int2(Int32(globalTextureToBeSortedSize),Int32(i)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            case .Y_descending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i),Int32(0)), end_index: simd_int2(Int32(i),Int32(globalTextureToBeSortedSize)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            default:
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            }
+           
+        }
+            if(sorting_setting == .diagonal_ascending || sorting_setting == .diagonal_descending){
+                previousSubArrayCount = globalTextureToBeSortedSize * 2 - 1
+                for i in 0..<globalTextureToBeSortedSize * 2 - 1{
+                    if(i < globalTextureToBeSortedSize){
+                        let current_pivot = PivotBuffer(start_index: simd_int2(0,Int32(i)), end_index: simd_int2(Int32(i + 1), 0))
+                        (ptrToPivotBuffer + i).pointee = current_pivot
+                    }
+                    else{
+                        let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i % globalTextureToBeSortedSize + 1),Int32(globalTextureToBeSortedSize - 1)), end_index: simd_int2(Int32(globalTextureToBeSortedSize), Int32(i % globalTextureToBeSortedSize + 1)))
+                        (ptrToPivotBuffer + i).pointee = current_pivot
+                    }
+                }
+            }
+        
+        // set slice_length for merge sort back to 1
+        sliceLength_test = 1
+    }
+    
+    func sortWithQuickSort(commandBuffer : MTLCommandBuffer, renderPassDescriptor : MTLRenderPassDescriptor){
+            var actualCount : Int = 0
+            var axis = Int()
+            var ascending = Bool()
+            var maxCount : Int = previousSubArrayCount * 2
+            if(fps == 0){
+                switch sorting_setting {
+                case .X_ascending:
+                    axis = 0
+                    ascending = true
+                    break
+                case .Y_ascending:
+                    axis = 1
+                    ascending = true
+                    break
+                case .X_descending:
+                    axis = 0
+                    ascending = false
+                    break
+                case .Y_descending:
+                    axis = 1
+                    ascending = false
+                    break
+                case .diagonal_ascending:
+                    axis = 2
+                    ascending = true
+                    break
+                case .diagonal_descending:
+                    axis = 2
+                    ascending = false
+                    break
+                default:
+                    break
+                }
+           
+            }
+            
+            
+            else{
+                for i in 0..<maxCount {
+                    // iterate row per row and add rowCount to totalTGCount
+                    
+                    // get the pointer to the current row
+                    let ptrToCurrentRowPivotBuffer = quickSortPivotBuffersGPUSide[1].contents().bindMemory(to: PivotBuffer.self, capacity: globalTextureToBeSortedSize * globalTextureToBeSortedSize)
+                    let ptrToCurrentRowPivotBufferCPU = quickSortPivotBufferCPUSide.contents().bindMemory(to: PivotBuffer.self, capacity: globalTextureToBeSortedSize * globalTextureToBeSortedSize)
+                    let currentPivot = (ptrToCurrentRowPivotBuffer + i).pointee
+                    var length = Int32()
+                    
+                    switch sorting_setting {
+                    case .X_ascending:
+                        length = currentPivot.end_index[0] - currentPivot.start_index[0]
+                        axis = 0
+                        ascending = true
+                        break
+                    case .Y_ascending:
+                        length = currentPivot.end_index[1] - currentPivot.start_index[1]
+                        axis = 1
+                        ascending = true
+                        break
+                    case .X_descending:
+                        length = currentPivot.end_index[0] - currentPivot.start_index[0]
+                        axis = 0
+                        ascending = false
+                        break
+                    case .Y_descending:
+                        length = currentPivot.end_index[1] - currentPivot.start_index[1]
+                        axis = 1
+                        ascending = false
+                        break
+                    case .diagonal_ascending:
+                        length = currentPivot.end_index[0] - currentPivot.start_index[0]
+                        axis = 2
+                        ascending = true
+                        break
+                    case .diagonal_descending:
+                        length = currentPivot.end_index[0] - currentPivot.start_index[0]
+                        axis = 2
+                        ascending = false
+                        break
+                    default:
+                        break
+                    }
+                    if(length > 1){
+                        (ptrToCurrentRowPivotBufferCPU + actualCount).pointee = currentPivot
+                        actualCount += 1
+                    }
+                    previousSubArrayCount = actualCount
+
+                    
+                }
+                if(actualCount != 0){
+                    guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+                    blitEncoder.copy(from: quickSortPivotBufferCPUSide, sourceOffset: 0, to: quickSortPivotBuffersGPUSide[0], destinationOffset: 0, size: actualCount * MemoryLayout<PivotBuffer>.stride)
+                    blitEncoder.endEncoding()
+                }
+               
+                
+            }
+            
+            var totalTGCount = (fps == 0 ? globalTextureToBeSortedSize : actualCount)
+            
+           
+            
+            if(totalTGCount != 0){
+
+                guard let RGBToHSVEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+                RGBToHSVEncoder.label = "RGBToHSV Input"
+                RGBToHSVEncoder.setComputePipelineState(RGBToHSVConversionKernel)
+                RGBToHSVEncoder.setTexture(quickSortTextures[0], index: 0)
+                RGBToHSVEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+                RGBToHSVEncoder.endEncoding()
+                
+                
+                guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+                computeEncoder.label = "quick sort pipeline"
+                computeEncoder.setComputePipelineState(quickSortComputePipeline)
+                computeEncoder.setTextures(quickSortTextures, range: 0..<2)
+                computeEncoder.setBuffers(quickSortPivotBuffersGPUSide, offsets: [0,0], range: 0..<2)
+                let tgMemoryCount = getAlignedMemory(for: UInt32.self, with: 16, count: globalTextureToBeSortedSize)
+                computeEncoder.setThreadgroupMemoryLength(tgMemoryCount, index: 0)
+                computeEncoder.setThreadgroupMemoryLength(tgMemoryCount, index: 1)
+                
+                computeEncoder.setBytes(&axis, length: 4, index: 4)
+                computeEncoder.setBytes(&ascending, length: 1, index: 5)
+              
+                if(sorting_setting == .diagonal_ascending || sorting_setting == .diagonal_descending){
+                    
+                    computeEncoder.dispatchThreadgroups(MTLSize(width: fps == 0 ? globalTextureToBeSortedSize * 2 - 1 : totalTGCount, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 2, height: 1, depth: 1))
+                }
+                else{
+                   
+                    computeEncoder.dispatchThreadgroups(MTLSize(width: fps == 0 ? globalTextureToBeSortedSize : totalTGCount, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 2, height: 1, depth: 1))
+                    
+                }
+               
+                computeEncoder.endEncoding()
+                
+                
+                guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+                blitEncoder.label = "copy output into input"
+                blitEncoder.copy(from: quickSortTextures[1], to: quickSortTextures[0])
+                blitEncoder.endEncoding()
+                
+                guard let HSVToRGBEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+                HSVToRGBEncoder.label = "HSVToRGB Output"
+                HSVToRGBEncoder.setComputePipelineState(HSVToRGBConversionKernel)
+                HSVToRGBEncoder.setTexture(quickSortTextures[0], index: 0)
+                HSVToRGBEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+                HSVToRGBEncoder.endEncoding()
+                
+                
+            }
+
+        guard let quickSorRender = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+        quickSorRender.label = "render Quick Sort"
+        quickSorRender.setViewport(MTLViewport(originX: 600, originY: 600, width: 400, height: 400, znear: 0, zfar: 1))
+        quickSorRender.setRenderPipelineState(drawToScreenPipeline)
+        quickSorRender.setFragmentTexture(quickSortTextures[0], index: 0)
+        quickSorRender.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        quickSorRender.endEncoding()
+        
+    
+    }
+    
+    func sortWithMergeSort(commandBuffer : MTLCommandBuffer, renderPassDescriptor : MTLRenderPassDescriptor){
+        if(sliceLength_test <= max_sliceLength){
+            
+            
+            // convert input to HSV
+            
+            guard let RGBToHSVEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            RGBToHSVEncoder.label = "RGBToHSV Input"
+            RGBToHSVEncoder.setComputePipelineState(RGBToHSVConversionKernel)
+            RGBToHSVEncoder.setTexture(mergeSortTextures_test[0], index: 0)
+            RGBToHSVEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            RGBToHSVEncoder.endEncoding()
+            
+            guard let mergeSort_testEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            mergeSort_testEncoder.label = "test Merge Sort"
+            
+            mergeSort_testEncoder.setComputePipelineState(mergeSortPipeline_test)
+            mergeSort_testEncoder.setVisibleFunctionTable(visibleFunctionTableForMergeSort, bufferIndex: 3)
+            mergeSort_testEncoder.setTextures(mergeSortTextures_test, range: 0..<2)
+           
+            
+            
+            switch sorting_setting {
+            case .X_ascending:
+                var axis = UInt32(0)
+                var ascending : Bool = true
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+               
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+                break
+            case .Y_ascending:
+                var axis = UInt32(1)
+                var ascending : Bool = true
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .X_descending:
+                var axis = UInt32(0)
+                var ascending : Bool = false
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .Y_descending:
+                var axis = UInt32(1)
+                var ascending : Bool = false
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_ascending:
+                var axis = UInt32(2)
+                var ascending : Bool = true
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+               
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize * 2 - 1), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_descending:
+                var axis = UInt32(2)
+                var ascending : Bool = false
+                mergeSort_testEncoder.setBytes(&axis, length: 4, index: 1)
+                mergeSort_testEncoder.setBytes(&ascending, length: 1, index: 2)
+                mergeSort_testEncoder.setBytes(&sliceLength_test, length: 4, index: 0)
+                mergeSort_testEncoder.dispatchThreadgroups(MTLSize(width: Int(globalTextureToBeSortedSize * 2 - 1), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            default:
+                break
+            }
+           
+           
+            mergeSort_testEncoder.endEncoding()
+            
+            // convert output to RGB
+            
+            guard let HSVToRGBEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            HSVToRGBEncoder.label = "HSVToRGB Output"
+            HSVToRGBEncoder.setComputePipelineState(HSVToRGBConversionKernel)
+            HSVToRGBEncoder.setTexture(mergeSortTextures_test[1], index: 0)
+            HSVToRGBEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            HSVToRGBEncoder.endEncoding()
+            
+            
+             //copy output to input before displaying it
+            
+            guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+            blitEncoder.label = "copy output to input"
+            blitEncoder.copy(from: mergeSortTextures_test[1], to: mergeSortTextures_test[0])
+            blitEncoder.endEncoding()
+            
+            
+            sliceLength_test *= 2
+            
+        }
+        
+        guard let renderMergeTestEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+        renderMergeTestEncoder.setViewport(MTLViewport(originX: 600, originY: 0, width: 400, height: 400, znear: 0, zfar: 1))
+        renderMergeTestEncoder.setRenderPipelineState(drawToScreenPipeline)
+        renderMergeTestEncoder.setFragmentTexture(mergeSortTextures_test[0], index: 0)
+        renderMergeTestEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        renderMergeTestEncoder.endEncoding()
+        
+        // MERGE SORT
+    }
+    
+    func sortWithRadixSort(commandBuffer : MTLCommandBuffer, renderPassDescriptor : MTLRenderPassDescriptor){
+        if(fps <= 7){
+            
+            guard let radixRGBToHSVEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            radixRGBToHSVEncoder.label = "RGB To HSV Encoder Radix"
+            radixRGBToHSVEncoder.setComputePipelineState(RGBToHSVConversionKernel)
+            radixRGBToHSVEncoder.setTexture(radixSortTextures[0], index: 0)
+            radixRGBToHSVEncoder.dispatchThreads(MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            radixRGBToHSVEncoder.endEncoding()
+//
+            
+            guard let radixSortComputeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            radixSortComputeEncoder.label = "test Radix LSB"
+            radixSortComputeEncoder.setComputePipelineState(radixSort_lsbComputePipeline)
+            radixSortComputeEncoder.setTextures(radixSortTextures, range: 0..<2)
+            var frameIndex = UInt32(fps)
+            radixSortComputeEncoder.setBytes(&frameIndex, length: 4, index: 0)
+            let tgMemorySize = getAlignedMemory(for: UInt8.self, with: 16, count: globalTextureToBeSortedSize)
+            radixSortComputeEncoder.setThreadgroupMemoryLength(tgMemorySize, index: 0)
+            
+            switch sorting_setting {
+            case .X_ascending:
+                var axis = UInt32(0)
+                var ascending : Bool = true
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+            case .X_descending:
+                var axis = UInt32(0)
+                var ascending : Bool = false
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+            case .Y_ascending:
+                var axis = UInt32(1)
+                var ascending : Bool = true
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+            case .Y_descending:
+                var axis = UInt32(1)
+                var ascending : Bool = false
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+            case .diagonal_ascending:
+                print("diagonal")
+                var axis = UInt32(2)
+                var ascending : Bool = true
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+            case .diagonal_descending:
+                var axis = UInt32(2)
+                var ascending : Bool = false
+                radixSortComputeEncoder.setBytes(&axis, length: 4, index: 1)
+                radixSortComputeEncoder.setBytes(&ascending, length: 1, index: 2)
+                radixSortComputeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: radixSortThreadCount, height: 1, depth: 1))
+                break
+                
+            default:
+                break
+            }
+
+          
+            
+            radixSortComputeEncoder.endEncoding()
+            
+             //convert output to RGB
+            
+            guard let radixHSVToRGB = commandBuffer.makeComputeCommandEncoder() else {return}
+            radixHSVToRGB.label = "HSV To RGB Radix"
+            radixHSVToRGB.setComputePipelineState(HSVToRGBConversionKernel)
+            radixHSVToRGB.setTexture(radixSortTextures[1], index: 0)
+            radixHSVToRGB.dispatchThreads(MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            radixHSVToRGB.endEncoding()
+            
+//
+             //blit output to input
+            guard let radixBlitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+            radixBlitEncoder.label = "radix copy output to input"
+            radixBlitEncoder.copy(from: radixSortTextures[1], to: radixSortTextures[0])
+            radixBlitEncoder.endEncoding()
+        }
+        
+        
+        
+        // render input for radix
+        
+        guard let radixRenderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+        radixRenderEncoder.label = "render radix result"
+        radixRenderEncoder.setViewport(MTLViewport(originX: 0, originY: 0, width: 400, height: 400, znear: 0, zfar: 1))
+        radixRenderEncoder.setRenderPipelineState(drawToScreenPipeline)
+        radixRenderEncoder.setFragmentTexture(radixSortTextures[0], index: 0)
+        radixRenderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        radixRenderEncoder.endEncoding()
+    }
+    
+    func sortWithOddEvenSort(commandBuffer : MTLCommandBuffer, renderPassDescriptor : MTLRenderPassDescriptor){
+        if(fps <= globalTextureToBeSortedSize){
+            
+            
+            guard let RGBToHSVEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            RGBToHSVEncoder.label = "RGBToHSV Input"
+            RGBToHSVEncoder.setComputePipelineState(RGBToHSVConversionKernel)
+            RGBToHSVEncoder.setTexture(odd_evenTextures[0], index: 0)
+            RGBToHSVEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            RGBToHSVEncoder.endEncoding()
+            
+            
+            guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            computeEncoder.setComputePipelineState(odd_evenComputePipelineState)
+            computeEncoder.setTexture(odd_evenTextures[0], index: 0)
+            computeEncoder.setTexture(odd_evenTextures[1], index: 1)
+            
+            switch sorting_setting {
+            case .X_ascending:
+                var even = true
+                var axis = UInt32(0)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .Y_ascending:
+                var even = true
+                var axis = UInt32(1)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .X_descending:
+                var even = true
+                var axis = UInt32(0)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .Y_descending:
+                var even = true
+                var axis = UInt32(1)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_ascending:
+                var even = true
+                var axis = UInt32(2)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_descending:
+                var even = true
+                var axis = UInt32(2)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            default:
+                break
+            }
+            
+           
+           
+           
+            computeEncoder.endEncoding()
+            
+            
+            // blit output into input and run the odd sort
+            
+            
+            
+
+            guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+            blitEncoder.label = "copy quick sort"
+            blitEncoder.copy(from: odd_evenTextures[1], to: odd_evenTextures[0])
+            blitEncoder.endEncoding()
+            
+            
+            guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            computeEncoder.setComputePipelineState(odd_evenComputePipelineState)
+            computeEncoder.setTextures(odd_evenTextures, range: 0..<2)
+           
+            
+            switch sorting_setting {
+            case .X_ascending:
+                var even = false
+                var axis = UInt32(0)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .Y_ascending:
+                var even = false
+                var axis = UInt32(1)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .X_descending:
+                var even = false
+                var axis = UInt32(0)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .Y_descending:
+                var even = false
+                var axis = UInt32(1)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_ascending:
+                var even = false
+                var axis = UInt32(2)
+                var ascending = true
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            case .diagonal_descending:
+                var even = false
+                var axis = UInt32(2)
+                var ascending = false
+                computeEncoder.setBytes(&even, length: 1, index: 0)
+                computeEncoder.setBytes(&axis, length: 4, index: 1)
+                computeEncoder.setBytes(&ascending, length: 1, index: 2)
+                computeEncoder.dispatchThreadgroups(MTLSize(width: globalTextureToBeSortedSize * 2 - 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+            default:
+                break
+            }
+            
+           
+           
+           
+            computeEncoder.endEncoding()
+            
+            
+            
+            
+            guard let HSVToRGBEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
+            HSVToRGBEncoder.label = "HSVToRGB Output"
+            HSVToRGBEncoder.setComputePipelineState(HSVToRGBConversionKernel)
+            HSVToRGBEncoder.setTexture(odd_evenTextures[1], index: 0)
+            HSVToRGBEncoder.dispatchThreads(MTLSize(width: Int(globalTextureToBeSortedSize), height: Int(globalTextureToBeSortedSize), depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 32, depth: 1))
+            HSVToRGBEncoder.endEncoding()
+            
+            // blit output into output again
+            
+            guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {return}
+            blitEncoder.label = "copy quick sort"
+            blitEncoder.copy(from: odd_evenTextures[1], to: odd_evenTextures[0])
+            blitEncoder.endEncoding()
+            
+            
+           
+            
+            
+            
+            
+        }
+        
+        
+        guard let odd_evenRenderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+        odd_evenRenderEncoder.label = "render Quick Sort"
+        odd_evenRenderEncoder.setViewport(MTLViewport(originX: 0, originY: 600, width: 400, height: 400, znear: 0, zfar: 1))
+        odd_evenRenderEncoder.setRenderPipelineState(drawToScreenPipeline)
+        odd_evenRenderEncoder.setFragmentTexture(odd_evenTextures[0], index: 0)
+        odd_evenRenderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        odd_evenRenderEncoder.endEncoding()
+        
+    }
+    
+    let view : MTKView
+    var frameRate = 120 {
+        didSet {
+            view.preferredFramesPerSecond = frameRate
+        }
+    }
     
     
     init?(mtkView: MTKView){
         
         
+        
         device = mtkView.device!
-        mtkView.preferredFramesPerSecond = 120
-        //drawableSize = MTLSize(width: Int(mtkView.drawableSize.width), height: Int(mtkView.drawableSize.height), depth: 1)
+        fence = device.makeFence()!
+        view = mtkView
+       
+        mtkView.preferredFramesPerSecond = 1
+        mtkView.drawableSize = CGSize(width: 1000, height: 1000)
+        
         commandQueue = device.makeCommandQueue()!
-        mtkView.colorPixelFormat = .bgra8Unorm_srgb
-        mtkView.depthStencilPixelFormat = .depth32Float
-        let depthStencilDescriptor = MTLDepthStencilDescriptor()
-        depthStencilDescriptor.isDepthWriteEnabled = true
-        depthStencilDescriptor.depthCompareFunction = .lessEqual
-        depthStencilState = device.makeDepthStencilState(descriptor: depthStencilDescriptor)!
-        
-        camera = Camera(for: mtkView, eye: simd_float3(0), centre: simd_float3(0,0,-1))
-        cameraLists.append(camera)
-           
-        let vertexDescriptor = cushionedVertexDescriptor()
-        
-        pipeline = pipeLine(device, "render_vertex", "render_fragment", vertexDescriptor, false)!
-       
-        let halfLength : Float = length * 0.5
-        
-        gridMesh = GridMesh(device: device, minBound: minBound, maxBound: maxBound, length: length)
-        
-        
-      
-        
-       
-        
-        voxelizedMesh = Voxel(device: device, address: "blub_triangulated", minmax: [minBound,maxBound], gridLength: length)
-        
-        renderToScreenPipeline = createGenericPipeline(device: device, vertexStageName: "drawToScreenVertex", fragmentStageName: "drawToScreenFragment", drawableColourFormat: mtkView.colorPixelFormat)
-        
-        
-        let textureDC = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: mtkView.colorPixelFormat, width: drawableSize.width, height: drawableSize.height, mipmapped: False)
-        textureDC.usage = [.shaderRead,.shaderWrite]
-        drawableTexture = device.makeTexture(descriptor: textureDC)!
-        
-        
-        
-        // set up the acceleration structure
-        accelerationStructureDC = MTLPrimitiveAccelerationStructureDescriptor()
-        
-        let geometryDC = MTLAccelerationStructureBoundingBoxGeometryDescriptor()
-        
-        let boundingBoxBuffer = device.makeBuffer(bytes: &BB, length: MemoryLayout<MTLAxisAlignedBoundingBox>.stride * 1 ,options: [])
-        let sphereBuffer = device.makeBuffer(bytes: spheres, length: MemoryLayout<Sphere>.stride * 1,options: [])
-        
-        geometryDC.boundingBoxBuffer = boundingBoxBuffer
-        geometryDC.boundingBoxCount = 1
-        geometryDC.boundingBoxStride = MemoryLayout<MTLAxisAlignedBoundingBox>.stride * 1
-        geometryDC.intersectionFunctionTableOffset = 0
-
-        
-        geometryDC.primitiveDataBuffer = sphereBuffer
-        geometryDC.primitiveDataStride = MemoryLayout<Sphere>.stride
-        geometryDC.primitiveDataElementSize = MemoryLayout<Sphere>.stride
-        
-        
-        accelerationStructureDC.geometryDescriptors = [geometryDC]
-        
-        
-        
-       
-        sizesAC = device.accelerationStructureSizes(descriptor: accelerationStructureDC)
-        accelerationStructure = device.makeAccelerationStructure(descriptor: accelerationStructureDC)!
-        scratchBufferAC = device.makeBuffer(length: sizesAC.buildScratchBufferSize)!
-        
-      
-        
-       
-        
-        instancedAccelerationStructureDC = MTLInstanceAccelerationStructureDescriptor()
-        instancedAccelerationStructureDC.instanceDescriptorType = .userID
-        instancedAccelerationStructureDC.instanceCount = 100
-        instancedAccelerationStructureDC.instancedAccelerationStructures = [accelerationStructure]
-        
-        let instancesBuffer = device.makeBuffer(length: MemoryLayout<MTLAccelerationStructureUserIDInstanceDescriptor>.size * 100)!
-        
-        let DCsPtr = instancesBuffer.contents().bindMemory(to: MTLAccelerationStructureUserIDInstanceDescriptor.self,capacity:100)
-        
-        var transformationMatrices = [MTLPackedFloat4x3]()
-        for i in 0...99{
-            let x = Float.random(in: -10...10)
-            let y = Float.random(in: -5...5)
-            let z = Float.random(in: -15 ... -5)
-            transformationMatrices.append(create_translation_matix_packed(translate: simd_float3(x,y,z)))
-            
-            (DCsPtr + i).pointee.accelerationStructureIndex = UInt32(0)
-            (DCsPtr + i).pointee.intersectionFunctionTableOffset = 0
-            (DCsPtr + i).pointee.transformationMatrix = transformationMatrices[i]
-            (DCsPtr + i).pointee.mask = UInt32(1)
-            (DCsPtr + i).pointee.userID = UInt32(i)
-            
-            let r = Float.random(in: 0...1)
-            let g = Float.random(in: 0...1)
-            let b = Float.random(in: 0...1)
-            
-            colours.append(packed_float4(r, g, b))
-        }
-        
-       
-      
-        colourBuffer = device.makeBuffer(bytes: colours, length: MemoryLayout<packed_float4>.stride * 100,options: [])!
-       
-        
-        instancedAccelerationStructureDC.instanceDescriptorBuffer = instancesBuffer
-        //instancedAccelerationStructureDC.instanceDescriptorStride = MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride
-        
-       
-        sizesIAC = device.accelerationStructureSizes(descriptor: instancedAccelerationStructureDC)
-
-        instancedAccelerationStructure = device.makeAccelerationStructure(descriptor: instancedAccelerationStructureDC)!
-        scratchBufferIAC = device.makeBuffer(length: sizesIAC.buildScratchBufferSize, options: .storageModePrivate)!
-        
-       
-        
-        // intersectionfunctions
+        mtkView.colorPixelFormat = .bgra8Unorm
+        mtkView.depthStencilPixelFormat = .invalid
         
         let library = device.makeDefaultLibrary()!
         
-        let sphereIntersectionFunction = library.makeFunction(name: "sphereIntersection")!
+      
+        var globalTextureToBeSortedDC = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, mipmapped: false)
+        globalTextureToBeSortedDC.usage = [.shaderRead,.shaderWrite]
+        globalTextureToBeSorted = device.makeTexture(descriptor: globalTextureToBeSortedDC)!
+        
+        var globalTextureData = [UInt8](repeating: 0, count: globalTextureToBeSortedSize * globalTextureToBeSortedSize * 4)
+        for i in stride(from: 0, to: globalTextureToBeSortedSize * globalTextureToBeSortedSize * 4, by: 4){
+            let r = UInt8.random(in: 0...255)
+            let g = UInt8.random(in: 0...255)
+            let b = UInt8.random(in: 0...255)
+            globalTextureData[i + 0] = r
+            globalTextureData[i + 1] = g
+            globalTextureData[i + 2] = b
+            globalTextureData[i + 3] = 255
+        }
+        globalTextureToBeSorted.replace(region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1)), mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: 4 * globalTextureToBeSortedSize)
+        
+        do {
+            RGBToHSVConversionKernel =  try createComputePipeline(device: device, with: "rgb_to_HSV")
+        }
+        catch {
+            print("rgb to hsv pipeline failed to initialise")
+            return nil
+        }
+        
+        do {
+            HSVToRGBConversionKernel = try createComputePipeline(device: device, with: "HSV_to_rgb")
+        }
+        catch{
+            print("hsv to rgb pipeline failed to initialise")
+            return nil
+        }
+        
+       
+        
+        
+        
+       
+        let drawToScreenPipelineDC = MTLRenderPipelineDescriptor()
+        drawToScreenPipelineDC.fragmentFunction = library.makeFunction(name: "drawToScreenFragment")!
+        drawToScreenPipelineDC.vertexFunction = library.makeFunction(name: "drawToScreenVertex")!
+        drawToScreenPipelineDC.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        drawToScreenPipelineDC.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        
+        do {
+            drawToScreenPipeline = try device.makeRenderPipelineState(descriptor: drawToScreenPipelineDC)
+        }
+        
+        catch {
+            print("Failed to init drawToScreen pipeline")
+            return nil
+        }
+        
+        //let width = 100
+      
+        
+        let mergeArrays_ascendingKernel = library.makeFunction(name: "mergeArrays_test_ascending")!
+        let mergeArrays_descendingKernel = library.makeFunction(name: "mergeArrays_test_descending")!
         let linkedFunctions = MTLLinkedFunctions()
-        linkedFunctions.functions = [sphereIntersectionFunction]
+        linkedFunctions.functions = [mergeArrays_ascendingKernel,mergeArrays_descendingKernel]
+        
+        var mergeSortKernel_test = library.makeFunction(name: "mergeSortPixels_test")!
+        
+      
+        
+        let mergeSortComputePipelineDC = MTLComputePipelineDescriptor()
+        mergeSortComputePipelineDC.linkedFunctions = linkedFunctions
+        mergeSortComputePipelineDC.computeFunction = mergeSortKernel_test
+        
+        do {
+            mergeSortPipeline_test = try device.makeComputePipelineState(descriptor: mergeSortComputePipelineDC, options: [], reflection: nil)
+        }
+        catch {
+            print(error)
+            return nil
+        }
         
         
-        let rayTracingPipelineDC = MTLComputePipelineDescriptor()
-        let rayTracingFunction = library.makeFunction(name: "RayTracing_Instanced")!
-        rayTracingPipelineDC.computeFunction = rayTracingFunction
-        rayTracingPipelineDC.linkedFunctions = linkedFunctions
-        rayTracingPipelineDC.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
+        let vftDC = MTLVisibleFunctionTableDescriptor()
+        vftDC.functionCount = 2
+        visibleFunctionTableForMergeSort = mergeSortPipeline_test.makeVisibleFunctionTable(descriptor: vftDC)!
+        let ascedingFH = mergeSortPipeline_test.functionHandle(function: mergeArrays_ascendingKernel)
+        let descendingFH = mergeSortPipeline_test.functionHandle(function: mergeArrays_descendingKernel)
+        visibleFunctionTableForMergeSort.setFunctions([ascedingFH,descendingFH], range: 0..<2)
         
-        rayTracingPipeline = try! device.makeComputePipelineState(descriptor: rayTracingPipelineDC, options: [], reflection: nil)
-        print(rayTracingPipeline.threadExecutionWidth)
+
+        for i in 0..<2 {
+            mergeSortTextures_test.append(device.makeTexture(descriptor: globalTextureToBeSortedDC)!)
+        }
         
-        let functionTableDC = MTLIntersectionFunctionTableDescriptor()
-        functionTableDC.functionCount = 1
-        functionTable = rayTracingPipeline.makeIntersectionFunctionTable(descriptor: functionTableDC)!
-        let functionHandle = rayTracingPipeline.functionHandle(function: sphereIntersectionFunction)
-        functionTable.setFunction(functionHandle, index: 0)
+
         
-        
-        
+        mergeSortTextures_test[0].replace(region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1)), mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: 4 * globalTextureToBeSortedSize)
         
         
+        let radix_sort_lsbKernel = library.makeFunction(name: "radixSort_lsb")!
+       
+        do {
+            radixSort_lsbComputePipeline = try device.makeComputePipelineState(function: radix_sort_lsbKernel)
+        }
         
+        catch{
+            print(error)
+            return nil
+        }
+        
+        let radixSortlsb_textureDC = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, mipmapped: false)
+        radixSortlsb_textureDC.usage = [.shaderRead,.shaderWrite]
+        for i in 0..<2 {
+            radixSortTextures.append(device.makeTexture(descriptor: globalTextureToBeSortedDC)!)
+        }
+     
+        radixSortTextures[0].replace(region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1)), mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: 4 * globalTextureToBeSortedSize)
+       
+        let quickSortKernel = library.makeFunction(name: "quickSort_test")!
+        
+        do {
+            quickSortComputePipeline = try device.makeComputePipelineState(function: quickSortKernel)
+        }
+        catch {
+            print(error)
+            return nil
+        }
+        
+
+        if(sorting_setting == .diagonal_ascending || sorting_setting == .diagonal_descending){
+            previousSubArrayCount = globalTextureToBeSortedSize * 2 - 1
+        }
+        for i in 0..<2 {
+            quickSortPivotBuffersGPUSide.append(device.makeBuffer(length: MemoryLayout<PivotBuffer>.stride * globalTextureToBeSortedSize * globalTextureToBeSortedSize)!)
+            quickSortTextures.append(device.makeTexture(descriptor: globalTextureToBeSortedDC)!)
+          
+            
+        }
+        quickSortPivotBuffersGPUSide[0].label = "quick pivot 0"
+        quickSortPivotBuffersGPUSide[1].label = "quick pivot 1"
+        quickSortPivotBufferCPUSide = device.makeBuffer(length: MemoryLayout<PivotBuffer>.stride * globalTextureToBeSortedSize * globalTextureToBeSortedSize)!
+       
+
+        
+        let ptrToPivotBuffer = quickSortPivotBuffersGPUSide[0].contents().bindMemory(to: PivotBuffer.self, capacity: globalTextureToBeSortedSize * globalTextureToBeSortedSize)
+       
+        for i in 0..<globalTextureToBeSortedSize {
+            switch sorting_setting {
+            case .X_ascending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(0),Int32(i)), end_index: simd_int2(Int32(globalTextureToBeSortedSize),Int32(i)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+            case .Y_ascending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i),Int32(0)), end_index: simd_int2(Int32(i),Int32(globalTextureToBeSortedSize)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            case .X_descending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(0),Int32(i)), end_index: simd_int2(Int32(globalTextureToBeSortedSize),Int32(i)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            case .Y_descending:
+                let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i),Int32(0)), end_index: simd_int2(Int32(i),Int32(globalTextureToBeSortedSize)))
+                (ptrToPivotBuffer + i).pointee = current_pivot
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            default:
+                previousSubArrayCount = globalTextureToBeSortedSize
+                break
+            }
+           
+        }
+            if(sorting_setting == .diagonal_ascending || sorting_setting == .diagonal_descending){
+                previousSubArrayCount = globalTextureToBeSortedSize * 2 - 1
+                for i in 0..<globalTextureToBeSortedSize * 2 - 1{
+                    if(i < globalTextureToBeSortedSize){
+                        let current_pivot = PivotBuffer(start_index: simd_int2(0,Int32(i)), end_index: simd_int2(Int32(i + 1), 0))
+                        (ptrToPivotBuffer + i).pointee = current_pivot
+                    }
+                    else{
+                        let current_pivot = PivotBuffer(start_index: simd_int2(Int32(i % globalTextureToBeSortedSize + 1),Int32(globalTextureToBeSortedSize - 1)), end_index: simd_int2(Int32(globalTextureToBeSortedSize), Int32(i % globalTextureToBeSortedSize + 1)))
+                        (ptrToPivotBuffer + i).pointee = current_pivot
+                    }
+                }
+            }
+            
+            
+        quickSortTextures[0].replace(region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1)), mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: 4 * globalTextureToBeSortedSize)
+    
+        
+        let odd_evenKernel = library.makeFunction(name: "oddEven_test")!
+        do {
+            odd_evenComputePipelineState = try device.makeComputePipelineState(function: odd_evenKernel)
+        }
+        catch {
+            print(error)
+            return nil
+        }
+        
+
+        
+        for _ in 0..<2 {
+            odd_evenTextures.append(device.makeTexture(descriptor: globalTextureToBeSortedDC)!)
+        }
+        
+        var odd_evenTextureData = [UInt8](repeating: 0, count: globalTextureToBeSortedSize * globalTextureToBeSortedSize * 4)
+        
+    
+        odd_evenTextures[0].replace(region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0), size: MTLSize(width: globalTextureToBeSortedSize, height: globalTextureToBeSortedSize, depth: 1)), mipmapLevel: 0, withBytes: globalTextureData, bytesPerRow: 4 * globalTextureToBeSortedSize)
+        
+        print("aligned memory is : \(getAlignedMemory(for: UInt32.self, with: 16, count: 100*100))")
     }
-   
-    // mtkView will automatically call this function
-    // whenever it wants new content to be rendered.
+    
+    
+    
+    
     
     
    
     
     
     func draw(in view: MTKView) {
-        if(fps == 0){
-            print(view.drawableSize)
+        
+        
+        if(sorting_setting_changed){
+            resetBuffersAndTextures()
+            sorting_setting_changed = false
         }
         
-       
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {return}
         
-        guard let accelerationStructorEncoder = commandBuffer.makeAccelerationStructureCommandEncoder() else {return}
-        accelerationStructorEncoder.build(accelerationStructure: instancedAccelerationStructure, descriptor: instancedAccelerationStructureDC, scratchBuffer: scratchBufferIAC, scratchBufferOffset: 0)
-        
-        accelerationStructorEncoder.build(accelerationStructure: accelerationStructure, descriptor: accelerationStructureDC, scratchBuffer: scratchBufferAC, scratchBufferOffset: 0)
-        
-        accelerationStructorEncoder.endEncoding()
-        
-      
         guard let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
-        //renderPassDescriptor.colorAttachments[0].storeAction = .dontCare
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 1, green: 1, blue: 1, alpha: 1)
         
-        guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {return}
-        computeEncoder.setComputePipelineState(rayTracingPipeline)
-        computeEncoder.setTexture(drawableTexture, index: 0)
-        computeEncoder.setBuffer(colourBuffer, offset: 0, index: 10)
-        computeEncoder.setBytes(&rt_camera, length: MemoryLayout<RT_Camera>.stride, index: 11)
-        computeEncoder.useResource(accelerationStructure, usage: .read)
-        computeEncoder.setIntersectionFunctionTable(functionTable, bufferIndex: 1)
-        computeEncoder.setAccelerationStructure(instancedAccelerationStructure, bufferIndex: 0)
-        computeEncoder.dispatchThreads(drawableSize, threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
-        computeEncoder.endEncoding()
         
-        guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+        if sorting_setting == nil {
+            
+            
+            guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {return}
+            renderEncoder.label = "render Quick Sort"
+            renderEncoder.setViewport(MTLViewport(originX: 0, originY: 600, width: 400, height: 400, znear: 0, zfar: 1))
+            renderEncoder.setRenderPipelineState(drawToScreenPipeline)
+            renderEncoder.setFragmentTexture(odd_evenTextures[0], index: 0)
+            renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            
+            
+            renderEncoder.setViewport(MTLViewport(originX: 0, originY: 0, width: 400, height: 400, znear: 0, zfar: 1))
+            renderEncoder.setFragmentTexture(radixSortTextures[0], index: 0)
+            renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+            renderEncoder.setViewport(MTLViewport(originX: 600, originY: 0, width: 400, height: 400, znear: 0, zfar: 1))
+            renderEncoder.setFragmentTexture(mergeSortTextures_test[0], index: 0)
+            renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+            
+            renderEncoder.setViewport(MTLViewport(originX: 600, originY: 600, width: 400, height: 400, znear: 0, zfar: 1))
+            renderEncoder.setFragmentTexture(quickSortTextures[0], index: 0)
+            renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            
+            
+            renderEncoder.endEncoding()
+            
+        }
+        else{
+            // QUICK SORT
+            
+            sortWithQuickSort(commandBuffer: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+            
+            
+            
+            renderPassDescriptor.colorAttachments[0].loadAction = .load
+
+            // ODD EVEN SORT
+            sortWithOddEvenSort(commandBuffer: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+            
+            
+            // ODD EVEN SORT
+          
+            
+
+            
+            
+            // MERGE SORT
+            
+           sortWithMergeSort(commandBuffer: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+            
+                    
+            
+            // RADIX SORT
+            sortWithRadixSort(commandBuffer: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+            
+            
+           // RADIX SORT
+
+        }
         
-        renderEncoder.setRenderPipelineState(renderToScreenPipeline)
-        renderEncoder.setFragmentTexture(drawableTexture, index: 0)
-        renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        renderEncoder.endEncoding()
+        
+        
+       
        
         
+        
+ 
+      
+       
+
+        
+  
+            
+        
+        
+        
+        
+       
         
         commandBuffer.present(view.currentDrawable!)
-       
         commandBuffer.commit()
-        fps+=1
-       
+        commandBuffer.waitUntilCompleted()
+        fps += 1
         
+            
         
-        
-
        
     }
 
     // mtkView will automatically call this function
     // whenever the size of the view changes (such as resizing the window).
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        
+       
     }
+        
+    
 }

@@ -11,7 +11,7 @@ import MetalKit
 import AppKit
 
 class Camera {
-    var scene : DefaultScene?
+   
     var eye : simd_float3
     var centre : simd_float3
     var previous_x : Float?
@@ -26,21 +26,31 @@ class Camera {
     var cameraMatrix : simd_float4x4
     var isOrtho = false
     
-//    var across : simd_float3
-//    var forward : simd_float3
-    
+    var cameraInfo : RT_Camera
     init(for view : MTKView, eye: simd_float3, centre: simd_float3) {
         self.view = view
         self.eye = eye
         self.centre = centre
-        width = 3024/2
-        height = 1726/2
+        width = 800/2
+        height = 800/2
         var up = simd_float3(0,1,0)
         if(abs(dot(centre,up)) > 0.99){
             print("Changing")
             up = simd_float3(0,0,1)
         }
+       
         cameraMatrix = simd_float4x4(eye: eye, center: eye + centre, up: up)
+        var right = simd_float3()
+        var Up = simd_float3()
+        let forward : simd_float3 = normalize(centre)
+        for i in 0...2 {
+            right[i] = cameraMatrix[i][0]
+            Up[i] = cameraMatrix[i][1]
+        }
+        right = normalize(right)
+        Up = normalize(Up)
+        //forward = normalize(forward)
+        cameraInfo = RT_Camera(origin: self.eye, right: right, up: Up, forward: forward)
        
     }
     
@@ -66,7 +76,7 @@ class Camera {
     }
     
     func update_eye(with offset : simd_float3){
-        //let offset = offset.x * across + offset.y * up + offset.z * forward
+        //let offset = offset.x * cameraInfo.right + offset.y * cameraInfo.up + offset.z * cameraInfo.forward
         eye += offset
         update()
     }
@@ -89,7 +99,19 @@ class Camera {
         
         cameraMatrix = simd_float4x4(eye: eye, center: centre + eye, up: simd_float3(0,1,0))
         
-        scene?.cameraHasBeenUpdated()
+        var right = simd_float3()
+        var Up = simd_float3()
+        let forward : simd_float3 = normalize(centre)
+        for i in 0...2 {
+            right[i] = cameraMatrix[i][0]
+            Up[i] = cameraMatrix[i][1]
+        }
+        right = normalize(right)
+        Up = normalize(Up)
+        //forward = normalize(forward)
+        cameraInfo = RT_Camera(origin: self.eye, right: right, up: Up, forward: forward)
+        
+        //scene?.cameraHasBeenUpdated()
             
         }
         

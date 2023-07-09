@@ -167,13 +167,51 @@ func create_normalMatrix(modelViewMatrix : simd_float4x4) -> simd_float4x4 {
     return (modelViewMatrix.inverse).transpose
 }
 
-func create_translation_matix_packed(translate : simd_float3) -> MTLPackedFloat4x3 {
-    let x = MTLPackedFloat3Make(1, 0, 0)
-    let y = MTLPackedFloat3Make(0, 1, 0)
-    let z = MTLPackedFloat3Make(0, 0, 1)
+func create_translation_matix_packed(translate : simd_float3, scale : Float) -> MTLPackedFloat4x3 {
+    let x = MTLPackedFloat3Make(scale, 0, 0)
+    let y = MTLPackedFloat3Make(0, scale, 0)
+    let z = MTLPackedFloat3Make(0, 0, scale)
     let w = MTLPackedFloat3Make(translate.x,translate.y,translate.z)
     let matrix = MTLPackedFloat4x3(columns: (x,y,z,w))
     return matrix
+}
+
+func create_packed_modelMatrix(translate : simd_float3, rotate : simd_float3, scale : Float) -> MTLPackedFloat4x3 {
+    
+    let translateMat = simd_float4x4(translate: translate)
+    let rotateMat = simd_float4x4(rotationXYZ: rotate)
+    let scaleMat = simd_float4x4(scale: simd_float3(scale))
+    
+    let result = translateMat*rotateMat*scaleMat
+    
+    let x = MTLPackedFloat3Make(result[0][0], result[0][1], result[0][2])
+    let y = MTLPackedFloat3Make(result[1][0], result[1][1], result[1][2])
+    let z = MTLPackedFloat3Make(result[2][0], result[2][1], result[2][2])
+    let w = MTLPackedFloat3Make(result[3][0], result[3][1], result[3][2])
+    
+    return MTLPackedFloat4x3(columns: (x,y,z,w))
+    
+    
+    
+}
+
+func create_packed_modelMatrix(translate : simd_float3, rotate : simd_float3, scale : simd_float3) -> MTLPackedFloat4x3 {
+    
+    let translateMat = simd_float4x4(translate: translate)
+    let rotateMat = simd_float4x4(rotationXYZ: rotate)
+    let scaleMat = simd_float4x4(scale: scale)
+    
+    let result = translateMat*rotateMat*scaleMat
+    
+    let x = MTLPackedFloat3Make(result[0][0], result[0][1], result[0][2])
+    let y = MTLPackedFloat3Make(result[1][0], result[1][1], result[1][2])
+    let z = MTLPackedFloat3Make(result[2][0], result[2][1], result[2][2])
+    let w = MTLPackedFloat3Make(result[3][0], result[3][1], result[3][2])
+    
+    return MTLPackedFloat4x3(columns: (x,y,z,w))
+    
+    
+    
 }
 
 
